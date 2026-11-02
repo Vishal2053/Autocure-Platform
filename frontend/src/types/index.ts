@@ -54,6 +54,27 @@ export interface SampleDataset {
   highlights: string[];
 }
 
+export interface UploadedColumn {
+  name: string;
+  dtype: string;
+  null_count: number;
+  unique_count: number;
+  sample_values: string[];
+}
+
+export interface UploadedDatasetResponse {
+  success: boolean;
+  dataset_id: string;
+  name: string;
+  description: string;
+  rows: number;
+  columns_count: number;
+  columns: UploadedColumn[];
+  preview_records: Array<Record<string, any>>;
+  suggested_target: string | null;
+  file_name: string;
+}
+
 export interface DiagnosisReport {
   dataset_shape: {
     rows: number;
@@ -72,6 +93,7 @@ export interface DiagnosisReport {
 
 export interface CleaningResult {
   duration_seconds: number;
+  cured_dataset_id?: string;
   before: {
     rows: number;
     cols: number;
@@ -115,5 +137,7 @@ export interface AutopilotResponse {
   drivers: FeatureDriver[];
   health_score: number;
   alerts: string[];
+  model_filename?: string;
+  model_download_url?: string;
+  model_size_kb?: number;
 }
-

@@ -1,4 +1,5 @@
-from fastapi import FastAPI, HTTPException, Body
+from fastapi import FastAPI, HTTPException, Body, UploadFile, File, Form
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
@@ -7,8 +8,15 @@ import numpy as np
 import autocure as ac
 import time
 import os
+import io
+import pickle
+import shutil
 
 from app.services.sample_data import get_sample_dataset, SAMPLE_CATALOG
+from app.services.dataset_service import dataset_manager
+
+MODELS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "storage", "models"))
+os.makedirs(MODELS_DIR, exist_ok=True)
 
 app = FastAPI(
     title="Autocure Platform API",
@@ -28,11 +36,13 @@ app.add_middleware(
 )
 
 class DiagnoseRequest(BaseModel):
+    dataset_id: Optional[str] = None
     sample_id: Optional[str] = "customer_churn"
     target: Optional[str] = "churn"
     custom_records: Optional[List[Dict[str, Any]]] = None
 
 class CureRequest(BaseModel):
+    dataset_id: Optional[str] = None
     sample_id: Optional[str] = "customer_churn"
     clip_outliers: bool = True
     drop_duplicates: bool = True
@@ -40,6 +50,7 @@ class CureRequest(BaseModel):
     custom_records: Optional[List[Dict[str, Any]]] = None
 
 class AutopilotRequest(BaseModel):
+    dataset_id: Optional[str] = None
     sample_id: Optional[str] = "customer_churn"
     target: str = "churn"
     task: str = "auto"
@@ -47,6 +58,26 @@ class AutopilotRequest(BaseModel):
     auto_drop_traps: bool = True
     track_mlflow: bool = False
     custom_records: Optional[List[Dict[str, Any]]] = None
+
+def resolve_dataframe(
+    dataset_id: Optional[str],
+    sample_id: Optional[str],
+    custom_records: Optional[List[Dict[str, Any]]]
+) -> pd.DataFrame:
+    """Helper to resolve DataFrame from custom records, dataset manager, or sample catalog."""
+    if custom_records and len(custom_records) > 0:
+        return pd.DataFrame(custom_records)
+    
+    target_id = dataset_id or sample_id or "customer_churn"
+    
+    df = dataset_manager.get_dataframe(target_id)
+    if df is not None:
+        return df.copy()
+    
+    try:
+        return get_sample_dataset(target_id)
+    except Exception:
+        raise ValueError(f"Dataset '{target_id}' could not be located in stored datasets or benchmark catalog.")
 
 @app.get("/")
 def read_root():
@@ -176,31 +207,131 @@ def list_sample_datasets():
     """Returns the list of bundled sample datasets available for instant experimentation."""
     return SAMPLE_CATALOG
 
-@app.get("/api/v1/sample-datasets/{dataset_id}/preview")
-def get_sample_preview(dataset_id: str, limit: int = 10):
-    """Returns raw sample records and column metadata."""
+@app.get("/api/v1/datasets")
+def list_all_datasets():
+    """Returns all registered datasets in the studio, including uploaded and benchmark datasets."""
+    return dataset_manager.list_datasets()
+
+@app.post("/api/v1/datasets/upload")
+async def upload_custom_dataset(
+    file: UploadFile = File(...),
+    name: Optional[str] = Form(None),
+    description: Optional[str] = Form(None),
+    target: Optional[str] = Form(None)
+):
+    """Upload custom CSV, TSV, Excel, or Parquet file for analysis in the Autocure Studio."""
     try:
-        df = get_sample_dataset(dataset_id)
-        records = df.head(limit).replace({np.nan: None}).to_dict(orient="records")
-        columns = [{"name": c, "dtype": str(df[c].dtype), "null_count": int(df[c].isnull().sum())} for c in df.columns]
+        content = await file.read()
+        filename = file.filename or "custom_dataset.csv"
+        
+        # Read file according to extension
+        lower_name = filename.lower()
+        if lower_name.endswith(".xlsx") or lower_name.endswith(".xls"):
+            df = pd.read_excel(io.BytesIO(content))
+        elif lower_name.endswith(".parquet"):
+            df = pd.read_parquet(io.BytesIO(content))
+        elif lower_name.endswith(".json"):
+            df = pd.read_json(io.BytesIO(content))
+        else:
+            # CSV or delimited text
+            try:
+                df = pd.read_csv(io.BytesIO(content))
+            except Exception:
+                try:
+                    df = pd.read_csv(io.BytesIO(content), sep=None, engine="python")
+                except Exception:
+                    df = pd.read_csv(io.BytesIO(content), encoding="latin-1")
+
+        if df.empty:
+            raise HTTPException(status_code=400, detail="The uploaded file contains no rows.")
+
+        # Clean string column names
+        df.columns = [str(c).strip() for c in df.columns]
+
+        # Suggest target column if not provided
+        suggested_target = target
+        if not suggested_target or suggested_target not in df.columns:
+            candidates = ["target", "label", "churn", "price", "sale_price", "outcome", "status", "class", "attrition", "y"]
+            for cand in candidates:
+                for col in df.columns:
+                    if col.lower() == cand:
+                        suggested_target = col
+                        break
+                if suggested_target:
+                    break
+            if not suggested_target and len(df.columns) > 0:
+                suggested_target = df.columns[-1]
+
+        # Register in dataset manager
+        ds_name = name or filename.rsplit(".", 1)[0].replace("_", " ").title()
+        ds_desc = description or f"Uploaded dataset from {filename} ({len(df)} rows, {df.shape[1]} columns)"
+
+        meta = dataset_manager.register_upload(
+            name=ds_name,
+            description=ds_desc,
+            df=df,
+            target=suggested_target
+        )
+
+        # Profile columns
+        columns = [
+            {
+                "name": col,
+                "dtype": str(df[col].dtype),
+                "null_count": int(df[col].isnull().sum()),
+                "unique_count": int(df[col].nunique()),
+                "sample_values": [str(x) for x in df[col].dropna().head(3).tolist()]
+            }
+            for col in df.columns
+        ]
+
+        # Sample preview records
+        preview = df.head(10).replace({np.nan: None}).to_dict(orient="records")
+
         return {
-            "dataset_id": dataset_id,
-            "total_rows": len(df),
-            "total_columns": df.shape[1],
+            "success": True,
+            "dataset_id": meta["id"],
+            "name": meta["name"],
+            "description": meta["description"],
+            "rows": meta["rows"],
+            "columns_count": meta["columns"],
             "columns": columns,
-            "preview_records": records
+            "preview_records": preview,
+            "suggested_target": suggested_target,
+            "file_name": filename
         }
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=f"Failed to process uploaded dataset: {str(e)}")
+
+@app.get("/api/v1/datasets/{dataset_id}/preview")
+def get_dataset_preview(dataset_id: str, page: int = 1, page_size: int = 15, search: Optional[str] = None):
+    """Returns preview records and pagination for any dataset."""
+    try:
+        return dataset_manager.get_preview(dataset_id, page=page, page_size=page_size, search=search)
+    except Exception as e:
+        # Fallback to sample dataset if not found in dataset_manager
+        try:
+            df = get_sample_dataset(dataset_id)
+            records = df.head(page_size).replace({np.nan: None}).to_dict(orient="records")
+            return {
+                "dataset_id": dataset_id,
+                "page": 1,
+                "page_size": page_size,
+                "total_records": len(df),
+                "total_pages": 1,
+                "columns": list(df.columns),
+                "records": records
+            }
+        except Exception:
+            raise HTTPException(status_code=404, detail=f"Dataset '{dataset_id}' not found.")
 
 @app.post("/api/v1/diagnosis/run")
 def run_diagnosis(req: DiagnoseRequest):
-    """Executes REAL ac.diagnose() on sample or custom dataset."""
+    """Executes REAL ac.diagnose() on sample, uploaded, or custom dataset."""
     try:
-        if req.custom_records:
-            df = pd.DataFrame(req.custom_records)
-        else:
-            df = get_sample_dataset(req.sample_id or "customer_churn")
+        df = resolve_dataframe(req.dataset_id, req.sample_id, req.custom_records)
 
         target = req.target if (req.target and req.target in df.columns) else None
         
@@ -209,7 +340,7 @@ def run_diagnosis(req: DiagnoseRequest):
         
         # Ensure JSON serializable
         clean_report = {
-            "dataset_shape": report.get("dataset_shape"),
+            "dataset_shape": report.get("dataset_shape", {"rows": df.shape[0], "columns": df.shape[1]}),
             "target": report.get("target"),
             "health_score": int(report.get("health_score", 0)),
             "alerts": report.get("alerts", []),
@@ -228,10 +359,7 @@ def run_diagnosis(req: DiagnoseRequest):
 def run_cleaning(req: CureRequest):
     """Executes REAL ac.cure() on dataset and returns before/after comparison."""
     try:
-        if req.custom_records:
-            df_before = pd.DataFrame(req.custom_records)
-        else:
-            df_before = get_sample_dataset(req.sample_id or "customer_churn")
+        df_before = resolve_dataframe(req.dataset_id, req.sample_id, req.custom_records)
 
         before_shape = df_before.shape
         before_nulls = int(df_before.isnull().sum().sum())
@@ -251,9 +379,24 @@ def run_cleaning(req: CureRequest):
         after_nulls = int(df_after.isnull().sum().sum())
         after_duplicates = int(df_after.duplicated().sum())
 
+        # Save cured dataframe to dataset_manager if from a known dataset
+        cured_ds_id = None
+        base_id = req.dataset_id or req.sample_id
+        if base_id:
+            cured_meta = dataset_manager._save_dataset_internal(
+                ds_id=f"{base_id}_cured",
+                name=f"{base_id.replace('_', ' ').title()} (Cured)",
+                description="Automatically cured with median imputation and outlier clipping",
+                df=df_after,
+                parent_id=base_id,
+                operation="Autocure AI Curing"
+            )
+            cured_ds_id = cured_meta["id"]
+
         return {
             "success": True,
             "duration_seconds": duration,
+            "cured_dataset_id": cured_ds_id,
             "before": {
                 "rows": before_shape[0],
                 "cols": before_shape[1],
@@ -283,10 +426,7 @@ def run_cleaning(req: CureRequest):
 def run_autopilot_api(req: AutopilotRequest):
     """Executes REAL ac.autopilot() on dataset with AutoML competition and explainability."""
     try:
-        if req.custom_records:
-            df = pd.DataFrame(req.custom_records)
-        else:
-            df = get_sample_dataset(req.sample_id or "customer_churn")
+        df = resolve_dataframe(req.dataset_id, req.sample_id, req.custom_records)
 
         target = req.target
         if target not in df.columns:
@@ -305,16 +445,34 @@ def run_autopilot_api(req: AutopilotRequest):
         duration = round(time.time() - start_time, 2)
 
         # Get explainability drivers
-        drivers_df = result.explain(top_n=8)
-        drivers = drivers_df.to_dict(orient="records") if drivers_df is not None and not drivers_df.empty else []
+        drivers = []
+        try:
+            drivers_df = result.explain(top_n=8)
+            if drivers_df is not None and not drivers_df.empty:
+                drivers = drivers_df.to_dict(orient="records")
+        except Exception as ex:
+            print("Driver explain notice:", ex)
 
         leaderboard = []
         for item in result.leaderboard:
             leaderboard.append({
                 "model": item.get("model"),
                 "score": round(float(item.get("score", 0)), 4),
-                "best_params": {k.replace("clf__", ""): v for k, v in (item.get("best_params") or {}).items()}
+                "best_params": {str(k).replace("clf__", "").replace("reg__", ""): v for k, v in (item.get("best_params") or {}).items()}
             })
+
+        # Save production model pickle to MODELS_DIR for instant user download
+        model_filename = f"autocure_{target}_{result.best_model_name}.pickle"
+        dest_model_path = os.path.join(MODELS_DIR, model_filename)
+        try:
+            with open(dest_model_path, "wb") as f:
+                pickle.dump(result.best_model, f)
+        except Exception as p_err:
+            print("Notice dumping pickle directly:", p_err)
+            if hasattr(result, "model_path") and result.model_path and os.path.exists(result.model_path):
+                shutil.copyfile(result.model_path, dest_model_path)
+
+        file_size_kb = round(os.path.getsize(dest_model_path) / 1024, 1) if os.path.exists(dest_model_path) else 0.0
 
         return {
             "success": True,
@@ -328,8 +486,50 @@ def run_autopilot_api(req: AutopilotRequest):
             "leaderboard": leaderboard,
             "drivers": drivers,
             "health_score": result.diagnostics.get("health_score", 100),
-            "alerts": result.diagnostics.get("alerts", [])
+            "alerts": result.diagnostics.get("alerts", []),
+            "model_filename": model_filename,
+            "model_download_url": f"/api/v1/models/download/{model_filename}",
+            "model_size_kb": file_size_kb
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Autopilot error: {str(e)}")
 
+@app.get("/api/v1/models/download/{model_filename}")
+def download_model_pickle(model_filename: str):
+    """Download the trained production ML pipeline as a standalone .pickle file."""
+    target_path = os.path.join(MODELS_DIR, model_filename)
+    if not os.path.exists(target_path):
+        # Fallback check in default models/ directory
+        alt_path = os.path.join(os.getcwd(), "models", model_filename)
+        if os.path.exists(alt_path):
+            target_path = alt_path
+        else:
+            raise HTTPException(status_code=404, detail=f"Model file '{model_filename}' not found.")
+
+    return FileResponse(
+        path=target_path,
+        filename=model_filename,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{model_filename}"'}
+    )
+
+@app.get("/api/v1/datasets/{dataset_id}/download")
+def download_dataset_csv(dataset_id: str):
+    """Download cleaned/cured or uploaded dataset as a CSV file."""
+    df = dataset_manager.get_dataframe(dataset_id)
+    if df is None:
+        try:
+            df = get_sample_dataset(dataset_id)
+        except Exception:
+            raise HTTPException(status_code=404, detail=f"Dataset '{dataset_id}' not found.")
+
+    output = io.BytesIO()
+    df.to_csv(output, index=False)
+    output.seek(0)
+    
+    clean_name = f"{dataset_id}.csv"
+    return StreamingResponse(
+        output,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{clean_name}"'}
+    )

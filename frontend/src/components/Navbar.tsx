@@ -1,15 +1,16 @@
 import React from 'react';
-import { ShieldCheck, Terminal, Cpu, BookOpen, Activity, ExternalLink, Sparkles } from 'lucide-react';
+import { ShieldCheck, Terminal, Cpu, BookOpen, ExternalLink, Sparkles, User, Layers } from 'lucide-react';
 import { GithubIcon } from './GithubIcon';
 
 interface NavbarProps {
   onScrollTo: (id: string) => void;
+  onOpenSimulator: () => void;
   version: string;
 }
 
-export const Navbar: React.FC<NavbarProps> = ({ onScrollTo, version }) => {
+export const Navbar: React.FC<NavbarProps> = ({ onScrollTo, onOpenSimulator, version }) => {
   return (
-    <header className="sticky top-0 z-50 backdrop-blur-md bg-slate-950/80 border-b border-slate-800/80">
+    <header className="sticky top-0 z-50 backdrop-blur-xl bg-slate-950/85 border-b border-slate-800/80">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
         {/* Brand */}
         <div className="flex items-center space-x-3 cursor-pointer" onClick={() => onScrollTo('hero')}>
@@ -37,43 +38,38 @@ export const Navbar: React.FC<NavbarProps> = ({ onScrollTo, version }) => {
         <nav className="hidden md:flex items-center space-x-1 lg:space-x-2 text-sm text-slate-300 font-medium">
           <button 
             onClick={() => onScrollTo('author')}
-            className="px-3 py-1.5 rounded-lg hover:text-white hover:bg-slate-900 transition-colors"
+            className="px-3 py-1.5 rounded-lg hover:text-white hover:bg-slate-900 transition-colors flex items-center space-x-1.5"
           >
-            Author Details
+            <User className="w-3.5 h-3.5 text-slate-400" />
+            <span>Author</span>
           </button>
           <button 
             onClick={() => onScrollTo('architecture')}
-            className="px-3 py-1.5 rounded-lg hover:text-white hover:bg-slate-900 transition-colors"
+            className="px-3 py-1.5 rounded-lg hover:text-white hover:bg-slate-900 transition-colors flex items-center space-x-1.5"
           >
-            Architecture
-          </button>
-          <button 
-            onClick={() => onScrollTo('live-doctor')}
-            className="px-3 py-1.5 rounded-lg hover:text-white hover:bg-slate-900 transition-colors flex items-center space-x-1"
-          >
-            <Activity className="w-3.5 h-3.5 text-brand-400" />
-            <span>Health Doctor</span>
-          </button>
-          <button 
-            onClick={() => onScrollTo('automl-demo')}
-            className="px-3 py-1.5 rounded-lg hover:text-white hover:bg-slate-900 transition-colors flex items-center space-x-1"
-          >
-            <Cpu className="w-3.5 h-3.5 text-emerald-400" />
-            <span>AutoML Studio</span>
+            <Layers className="w-3.5 h-3.5 text-brand-400" />
+            <span>Architecture</span>
           </button>
           <button 
             onClick={() => onScrollTo('api-docs')}
-            className="px-3 py-1.5 rounded-lg hover:text-white hover:bg-slate-900 transition-colors flex items-center space-x-1"
+            className="px-3 py-1.5 rounded-lg hover:text-white hover:bg-slate-900 transition-colors flex items-center space-x-1.5"
           >
             <BookOpen className="w-3.5 h-3.5 text-slate-400" />
             <span>Python APIs</span>
           </button>
           <button 
             onClick={() => onScrollTo('cli-suite')}
-            className="px-3 py-1.5 rounded-lg hover:text-white hover:bg-slate-900 transition-colors flex items-center space-x-1"
+            className="px-3 py-1.5 rounded-lg hover:text-white hover:bg-slate-900 transition-colors flex items-center space-x-1.5"
           >
             <Terminal className="w-3.5 h-3.5 text-slate-400" />
             <span>CLI Suite</span>
+          </button>
+          <button 
+            onClick={() => onScrollTo('algorithms')}
+            className="px-3 py-1.5 rounded-lg hover:text-white hover:bg-slate-900 transition-colors flex items-center space-x-1.5"
+          >
+            <Cpu className="w-3.5 h-3.5 text-teal-400" />
+            <span>Algorithms</span>
           </button>
         </nav>
 
@@ -91,7 +87,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onScrollTo, version }) => {
           </a>
 
           <button
-            onClick={() => onScrollTo('live-doctor')}
+            onClick={onOpenSimulator}
             className="inline-flex items-center space-x-2 px-4 py-2 text-xs font-semibold bg-gradient-to-r from-brand-600 to-emerald-600 hover:from-brand-500 hover:to-emerald-500 text-white rounded-lg shadow-lg shadow-brand-600/20 transition-all transform active:scale-95"
           >
             <Sparkles className="w-3.5 h-3.5" />

@@ -1,14 +1,15 @@
 import React, { useState } from 'react';
-import { Copy, Check, Terminal, Activity, Sparkles, Database, Layers, Cpu, Code2 } from 'lucide-react';
+import { Copy, Check, Terminal, Activity, Sparkles, Database, Layers, Cpu, Code2, ArrowRight } from 'lucide-react';
 import type { PackageInfoResponse } from '../types';
 
 interface HeroSectionProps {
   info?: PackageInfoResponse | null;
   onScrollTo: (id: string) => void;
+  onOpenSimulator: () => void;
   backendOnline: boolean;
 }
 
-export const HeroSection: React.FC<HeroSectionProps> = ({ info, onScrollTo, backendOnline }) => {
+export const HeroSection: React.FC<HeroSectionProps> = ({ info, onScrollTo, onOpenSimulator, backendOnline }) => {
   const [copied, setCopied] = useState(false);
   const installCmd = "pip install autocure";
 
@@ -95,11 +96,12 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ info, onScrollTo, back
             </div>
 
             <button
-              onClick={() => onScrollTo('live-doctor')}
+              onClick={onOpenSimulator}
               className="w-full sm:w-auto inline-flex items-center justify-center space-x-2 px-6 py-3 bg-gradient-to-r from-brand-600 to-emerald-600 hover:from-brand-500 hover:to-emerald-500 text-white font-semibold text-sm rounded-xl shadow-lg shadow-brand-600/25 transition-all transform hover:-translate-y-0.5 active:translate-y-0"
             >
               <Sparkles className="w-4 h-4" />
-              <span>Launch Live Simulator</span>
+              <span>Launch Live Studio Simulator</span>
+              <ArrowRight className="w-4 h-4" />
             </button>
 
             <button

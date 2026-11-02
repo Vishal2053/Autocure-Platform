@@ -1,4 +1,11 @@
-import type { PackageInfoResponse, SampleDataset, DiagnosisReport, CleaningResult, AutopilotResponse } from '../types';
+import type { 
+  PackageInfoResponse, 
+  SampleDataset, 
+  DiagnosisReport, 
+  CleaningResult, 
+  AutopilotResponse,
+  UploadedDatasetResponse 
+} from '../types';
 
 const API_BASE = typeof window !== 'undefined' && window.location.hostname === '127.0.0.1' 
   ? 'http://127.0.0.1:8000' 
@@ -172,11 +179,40 @@ export async function fetchSampleDatasets(): Promise<SampleDataset[]> {
   }
 }
 
-export async function runDiagnosis(sampleId: string, target?: string): Promise<DiagnosisReport> {
+export async function uploadCustomDataset(
+  file: File,
+  name?: string,
+  description?: string,
+  target?: string
+): Promise<UploadedDatasetResponse> {
+  const formData = new FormData();
+  formData.append('file', file);
+  if (name) formData.append('name', name);
+  if (description) formData.append('description', description);
+  if (target) formData.append('target', target);
+
+  const res = await fetch(`${API_BASE}/api/v1/datasets/upload`, {
+    method: 'POST',
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(errorText || 'Failed to upload dataset');
+  }
+
+  return await res.json();
+}
+
+export async function runDiagnosis(datasetId: string, target?: string): Promise<DiagnosisReport> {
   const res = await fetch(`${API_BASE}/api/v1/diagnosis/run`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ sample_id: sampleId, target: target || null }),
+    body: JSON.stringify({ 
+      dataset_id: datasetId,
+      sample_id: datasetId,
+      target: target || null 
+    }),
   });
   if (!res.ok) {
     const errorText = await res.text();
@@ -186,21 +222,48 @@ export async function runDiagnosis(sampleId: string, target?: string): Promise<D
   return data.report;
 }
 
-export async function runCleaning(sampleId: string, clipOutliers = true): Promise<CleaningResult> {
+export async function runCleaning(
+  datasetId: string, 
+  clipOutliers = true,
+  dropDuplicates = true,
+  extractDates = true
+): Promise<CleaningResult> {
   const res = await fetch(`${API_BASE}/api/v1/cleaning/run`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ sample_id: sampleId, clip_outliers: clipOutliers }),
+    body: JSON.stringify({ 
+      dataset_id: datasetId,
+      sample_id: datasetId,
+      clip_outliers: clipOutliers,
+      drop_duplicates: dropDuplicates,
+      extract_dates: extractDates
+    }),
   });
-  if (!res.ok) throw new Error('Failed to run data cleaning');
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(errorText || 'Failed to run data cleaning');
+  }
   return await res.json();
 }
 
-export async function runAutopilot(sampleId: string, target: string, task = "auto"): Promise<AutopilotResponse> {
+export async function runAutopilot(
+  datasetId: string, 
+  target: string, 
+  task = "auto",
+  clipOutliers = true,
+  autoDropTraps = true
+): Promise<AutopilotResponse> {
   const res = await fetch(`${API_BASE}/api/v1/training/run-autopilot`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ sample_id: sampleId, target: target, task: task }),
+    body: JSON.stringify({ 
+      dataset_id: datasetId,
+      sample_id: datasetId,
+      target: target, 
+      task: task,
+      clip_outliers: clipOutliers,
+      auto_drop_traps: autoDropTraps
+    }),
   });
   if (!res.ok) {
     const error = await res.text();
@@ -208,3 +271,12 @@ export async function runAutopilot(sampleId: string, target: string, task = "aut
   }
   return await res.json();
 }
+
+export function getModelDownloadUrl(modelFilename: string): string {
+  return `${API_BASE}/api/v1/models/download/${modelFilename}`;
+}
+
+export function getDatasetDownloadUrl(datasetId: string): string {
+  return `${API_BASE}/api/v1/datasets/${datasetId}/download`;
+}
+

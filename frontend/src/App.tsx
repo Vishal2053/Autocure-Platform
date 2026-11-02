@@ -1,17 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import type { PackageInfoResponse, SampleDataset } from './types';
-import { fetchPackageInfo, fetchSampleDatasets } from './services/api';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import type { PackageInfoResponse } from './types';
+import { fetchPackageInfo } from './services/api';
 
-import { Navbar } from './components/Navbar';
-import { HeroSection } from './components/HeroSection';
-import { AuthorCard } from './components/AuthorCard';
-import { ArchitectureFlow } from './components/ArchitectureFlow';
-import { LivePlayground } from './components/LivePlayground';
-import { LiveAutoMLDemo } from './components/LiveAutoMLDemo';
-import { ApiExplorer } from './components/ApiExplorer';
-import { CliTerminal } from './components/CliTerminal';
-import { AlgorithmsGrid } from './components/AlgorithmsGrid';
-import { Footer } from './components/Footer';
+import { LandingPage } from './pages/LandingPage';
+import { SimulatorPage } from './pages/SimulatorPage';
 
 const INITIAL_PACKAGE_INFO: PackageInfoResponse = {
   identity: {
@@ -121,52 +114,8 @@ const INITIAL_PACKAGE_INFO: PackageInfoResponse = {
   }
 };
 
-const INITIAL_SAMPLES: SampleDataset[] = [
-  {
-    id: "customer_churn",
-    name: "Customer Churn Prediction",
-    task: "Classification",
-    target: "churn",
-    rows: 122,
-    cols: 11,
-    description: "Predict whether telecom subscribers will cancel service. Includes ID traps, constant columns, missing values, and skewed distributions.",
-    highlights: ["Target: churn (0/1)", "Has ID Trap: customer_id", "Zero-variance: system_constant", "Missing values in charges"]
-  },
-  {
-    id: "house_prices",
-    name: "House Price Valuation",
-    task: "Regression",
-    target: "sale_price",
-    rows: 100,
-    cols: 10,
-    description: "Estimate residential property prices. Includes UUID identifier, constant column, extreme price outliers, and skewed sqft features.",
-    highlights: ["Target: sale_price ($)", "Has ID Trap: property_uuid", "Zero-variance: listing_status", "Extreme Outlier present"]
-  },
-  {
-    id: "student_performance",
-    name: "Student Exam Outcome",
-    task: "Classification",
-    target: "passed_exam",
-    rows: 110,
-    cols: 7,
-    description: "Predict student success from attendance, study hours, and academic history.",
-    highlights: ["Target: passed_exam", "High-cardinality roll_no", "Categorical missing values"]
-  },
-  {
-    id: "employee_attrition",
-    name: "Employee Attrition Risk",
-    task: "Classification",
-    target: "attrition",
-    rows: 100,
-    cols: 8,
-    description: "Predict employee departure based on department, income, job satisfaction, and overtime.",
-    highlights: ["Target: attrition (Yes/No)", "Categorical encoding required", "Mixed numerical ranges"]
-  }
-];
-
 export const App: React.FC = () => {
   const [packageInfo, setPackageInfo] = useState<PackageInfoResponse>(INITIAL_PACKAGE_INFO);
-  const [samples, setSamples] = useState<SampleDataset[]>(INITIAL_SAMPLES);
   const [backendOnline, setBackendOnline] = useState<boolean>(false);
 
   useEffect(() => {
@@ -181,73 +130,33 @@ export const App: React.FC = () => {
         console.warn("Backend API not reachable yet:", e);
         setBackendOnline(false);
       }
-
-      try {
-        const datasets = await fetchSampleDatasets();
-        if (Array.isArray(datasets) && datasets.length > 0) {
-          setSamples(datasets);
-        }
-      } catch (e) {
-        console.warn("Using bundled benchmark datasets:", e);
-      }
     }
 
     loadData();
   }, []);
 
-  const scrollToSection = (id: string) => {
-    const el = document.getElementById(id);
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth' });
-    }
-  };
-
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-brand-500/30 selection:text-brand-300">
-      {/* Top Navbar */}
-      <Navbar 
-        onScrollTo={scrollToSection} 
-        version={packageInfo?.identity?.version || '1.3.0'} 
-      />
-
-      <main className="flex-1">
-        {/* Hero Section */}
-        <HeroSection 
-          info={packageInfo} 
-          onScrollTo={scrollToSection} 
-          backendOnline={backendOnline} 
+    <BrowserRouter>
+      <Routes>
+        <Route 
+          path="/" 
+          element={
+            <LandingPage 
+              packageInfo={packageInfo} 
+              backendOnline={backendOnline} 
+            />
+          } 
         />
-
-        {/* Creator & Author Showcase */}
-        <AuthorCard identity={packageInfo?.identity || null} />
-
-        {/* 5-Stage Architecture Flow */}
-        <ArchitectureFlow />
-
-        {/* Interactive Live Data Health Doctor & Curing Studio */}
-        <LivePlayground samples={samples} />
-
-        {/* 1-Click Autopilot & AutoML Demo */}
-        <LiveAutoMLDemo samples={samples} />
-
-        {/* Comprehensive Python API Documentation */}
-        <ApiExplorer apis={packageInfo?.apis || []} />
-
-        {/* CLI Command Suite Sandbox */}
-        <CliTerminal commands={packageInfo?.cli_commands || []} />
-
-        {/* Supported Estimators & Pipelines */}
-        {packageInfo?.models_supported && (
-          <AlgorithmsGrid models={packageInfo.models_supported} />
-        )}
-      </main>
-
-      {/* Footer */}
-      <Footer 
-        identity={packageInfo?.identity || null} 
-        onScrollTo={scrollToSection} 
-      />
-    </div>
+        <Route 
+          path="/simulator" 
+          element={<SimulatorPage />} 
+        />
+        <Route 
+          path="*" 
+          element={<Navigate to="/" replace />} 
+        />
+      </Routes>
+    </BrowserRouter>
   );
 };
 
