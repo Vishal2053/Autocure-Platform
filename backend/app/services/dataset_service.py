@@ -7,10 +7,8 @@ import numpy as np
 from typing import Dict, List, Optional, Any
 from app.services.sample_data import get_sample_dataset, SAMPLE_CATALOG
 
-STORAGE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "storage", "datasets"))
-os.makedirs(STORAGE_DIR, exist_ok=True)
-
 class DatasetManager:
+    """In-memory dataset repository for Autocure Studio (zero disk clutter)."""
     def __init__(self):
         self._datasets: Dict[str, Dict[str, Any]] = {}
         self._dataframes: Dict[str, pd.DataFrame] = {}
@@ -18,7 +16,7 @@ class DatasetManager:
         self._seed_sample_datasets()
 
     def _seed_sample_datasets(self):
-        """Pre-populate the store with rich benchmark datasets."""
+        """Pre-populate the store with rich benchmark datasets in memory."""
         for sample in SAMPLE_CATALOG:
             ds_id = sample["id"]
             df = get_sample_dataset(ds_id)
@@ -44,14 +42,6 @@ class DatasetManager:
         parent_id: Optional[str] = None,
         operation: Optional[str] = None
     ) -> Dict[str, Any]:
-        file_path = os.path.join(STORAGE_DIR, f"{ds_id}.parquet")
-        try:
-            df.to_parquet(file_path, index=False)
-        except Exception:
-            # Fallback to CSV if parquet engine isn't ready
-            file_path = os.path.join(STORAGE_DIR, f"{ds_id}.csv")
-            df.to_csv(file_path, index=False)
-
         col_profiles = []
         for col in df.columns:
             series = df[col]
@@ -64,14 +54,17 @@ class DatasetManager:
                 "is_numeric": bool(pd.api.types.is_numeric_dtype(series))
             })
 
+        # Calculate exact in-memory memory footprint
+        mem_bytes = int(df.memory_usage(deep=True).sum())
+
         meta = {
             "id": ds_id,
             "name": name,
             "description": description,
             "rows": len(df),
             "columns": df.shape[1],
-            "file_size_bytes": os.path.getsize(file_path) if os.path.exists(file_path) else 0,
-            "file_path": file_path,
+            "file_size_bytes": mem_bytes,
+            "file_path": None,
             "created_at": time.time(),
             "is_sample": is_sample,
             "task": task or ("Classification" if target and df[target].nunique() <= 10 else "Regression"),
@@ -108,13 +101,13 @@ class DatasetManager:
         if ds_id in self._dataframes:
             return self._dataframes[ds_id]
         meta = self._datasets.get(ds_id)
-        if meta and os.path.exists(meta["file_path"]):
-            if meta["file_path"].endswith(".parquet"):
-                df = pd.read_parquet(meta["file_path"])
-            else:
-                df = pd.read_csv(meta["file_path"])
-            self._dataframes[ds_id] = df
-            return df
+        if meta and meta.get("is_sample"):
+            try:
+                df = get_sample_dataset(ds_id)
+                self._dataframes[ds_id] = df
+                return df
+            except Exception:
+                pass
         return None
 
     def get_preview(
@@ -234,13 +227,9 @@ class DatasetManager:
 
     def delete_dataset(self, ds_id: str) -> bool:
         if ds_id in self._datasets:
-            meta = self._datasets.pop(ds_id)
+            self._datasets.pop(ds_id, None)
             self._dataframes.pop(ds_id, None)
-            if os.path.exists(meta["file_path"]):
-                try:
-                    os.remove(meta["file_path"])
-                except Exception:
-                    pass
+            self._history.pop(ds_id, None)
             return True
         return False
 

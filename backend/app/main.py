@@ -20,8 +20,31 @@ load_dotenv()
 from app.services.sample_data import get_sample_dataset, SAMPLE_CATALOG
 from app.services.dataset_service import dataset_manager
 
-MODELS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "storage", "models"))
-os.makedirs(MODELS_DIR, exist_ok=True)
+# Ephemeral single-model storage (auto-cleans previous model when new one is trained or on exit)
+TEMP_MODEL_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".temp_model"))
+
+ACTIVE_MODEL: Dict[str, Any] = {
+    "pipeline": None,
+    "model_name": None,
+    "filename": None,
+    "bytes": None,
+    "size_kb": 0.0,
+    "temp_filepath": None,
+}
+
+def cleanup_active_model():
+    """Removes previous temporary model file from disk and resets active state."""
+    if ACTIVE_MODEL.get("temp_filepath") and os.path.exists(ACTIVE_MODEL["temp_filepath"]):
+        try:
+            os.remove(ACTIVE_MODEL["temp_filepath"])
+        except Exception:
+            pass
+    if os.path.exists(TEMP_MODEL_DIR):
+        try:
+            shutil.rmtree(TEMP_MODEL_DIR, ignore_errors=True)
+        except Exception:
+            pass
+    ACTIVE_MODEL.clear()
 
 app = FastAPI(
     title="Autocure Platform API",
@@ -440,7 +463,10 @@ def run_autopilot_api(req: AutopilotRequest):
         if target not in df.columns:
             raise ValueError(f"Target column '{target}' not found in dataset columns: {list(df.columns)}")
 
-        # Run real ac.autopilot
+        # 1. Clear previous model from memory & delete previous temporary file from disk
+        cleanup_active_model()
+
+        # 2. Run real ac.autopilot with model_dir=None to prevent accumulating models on disk
         start_time = time.time()
         result = ac.autopilot(
             df=df,
@@ -448,6 +474,7 @@ def run_autopilot_api(req: AutopilotRequest):
             task=req.task,
             clip_outliers=req.clip_outliers,
             auto_drop_traps=req.auto_drop_traps,
+            model_dir=None,     # Do not write permanent model files to disk
             track_mlflow=False  # Keep demo run lightweight
         )
         duration = round(time.time() - start_time, 2)
@@ -469,18 +496,22 @@ def run_autopilot_api(req: AutopilotRequest):
                 "best_params": {str(k).replace("clf__", "").replace("reg__", ""): v for k, v in (item.get("best_params") or {}).items()}
             })
 
-        # Save production model pickle to MODELS_DIR for instant user download
+        # Ephemeral model caching: serialize in-memory and write exactly ONE active temp file
         model_filename = f"autocure_{target}_{result.best_model_name}.pickle"
-        dest_model_path = os.path.join(MODELS_DIR, model_filename)
-        try:
-            with open(dest_model_path, "wb") as f:
-                pickle.dump(result.best_model, f)
-        except Exception as p_err:
-            print("Notice dumping pickle directly:", p_err)
-            if hasattr(result, "model_path") and result.model_path and os.path.exists(result.model_path):
-                shutil.copyfile(result.model_path, dest_model_path)
+        model_bytes = pickle.dumps(result.best_model)
+        file_size_kb = round(len(model_bytes) / 1024, 1)
 
-        file_size_kb = round(os.path.getsize(dest_model_path) / 1024, 1) if os.path.exists(dest_model_path) else 0.0
+        os.makedirs(TEMP_MODEL_DIR, exist_ok=True)
+        temp_file = os.path.join(TEMP_MODEL_DIR, "active_model.pickle")
+        with open(temp_file, "wb") as f:
+            f.write(model_bytes)
+
+        ACTIVE_MODEL["pipeline"] = result.best_model
+        ACTIVE_MODEL["model_name"] = result.best_model_name
+        ACTIVE_MODEL["filename"] = model_filename
+        ACTIVE_MODEL["bytes"] = model_bytes
+        ACTIVE_MODEL["size_kb"] = file_size_kb
+        ACTIVE_MODEL["temp_filepath"] = temp_file
 
         return {
             "success": True,
@@ -504,22 +535,42 @@ def run_autopilot_api(req: AutopilotRequest):
 
 @app.get("/api/v1/models/download/{model_filename}")
 def download_model_pickle(model_filename: str):
-    """Download the trained production ML pipeline as a standalone .pickle file."""
-    target_path = os.path.join(MODELS_DIR, model_filename)
-    if not os.path.exists(target_path):
-        # Fallback check in default models/ directory
-        alt_path = os.path.join(os.getcwd(), "models", model_filename)
-        if os.path.exists(alt_path):
-            target_path = alt_path
-        else:
-            raise HTTPException(status_code=404, detail=f"Model file '{model_filename}' not found.")
+    """Download the trained production ML pipeline as a standalone .pickle file streamed directly from memory."""
+    # Check if active model bytes are in memory
+    if ACTIVE_MODEL.get("bytes"):
+        dl_name = ACTIVE_MODEL.get("filename") or model_filename
+        if not dl_name.endswith(".pickle"):
+            dl_name = f"{dl_name}.pickle"
+        return StreamingResponse(
+            io.BytesIO(ACTIVE_MODEL["bytes"]),
+            media_type="application/octet-stream",
+            headers={"Content-Disposition": f'attachment; filename="{dl_name}"'}
+        )
 
-    return FileResponse(
-        path=target_path,
-        filename=model_filename,
-        media_type="application/octet-stream",
-        headers={"Content-Disposition": f'attachment; filename="{model_filename}"'}
+    # Fallback to ephemeral temp file on disk if exists
+    temp_path = ACTIVE_MODEL.get("temp_filepath")
+    if temp_path and os.path.exists(temp_path):
+        return FileResponse(
+            path=temp_path,
+            filename=model_filename,
+            media_type="application/octet-stream",
+            headers={"Content-Disposition": f'attachment; filename="{model_filename}"'}
+        )
+
+    raise HTTPException(
+        status_code=404,
+        detail="No active model found. Models are held ephemerally and automatically cleared when a new model is trained or session ends."
     )
+
+@app.on_event("startup")
+def on_app_startup():
+    """Clean up any leftover temporary model files when the server starts."""
+    cleanup_active_model()
+
+@app.on_event("shutdown")
+def on_app_shutdown():
+    """Clean up any ephemeral model files when the server closes."""
+    cleanup_active_model()
 
 @app.get("/api/v1/datasets/{dataset_id}/download")
 def download_dataset_csv(dataset_id: str):

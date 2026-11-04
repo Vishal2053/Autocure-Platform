@@ -17,8 +17,12 @@ models/
 backend/models/
 storage/
 backend/storage/
+.temp/
+.temp_model/
+backend/.temp_model/
 *.pickle
 *.pkl
+*.parquet
 mlruns/
 .mlflow/
 
