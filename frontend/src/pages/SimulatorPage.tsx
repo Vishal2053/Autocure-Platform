@@ -33,7 +33,8 @@ import {
   uploadCustomDataset, 
   runDiagnosis, 
   runCleaning, 
-  runAutopilot 
+  runAutopilot,
+  API_BASE
 } from '../services/api';
 
 const DEFAULT_SAMPLES: SampleDataset[] = [
@@ -342,8 +343,7 @@ export const SimulatorPage: React.FC = () => {
 
   const handleDownloadModel = () => {
     const filename = autopilotResult?.model_filename || `autocure_${currentTarget}_${autopilotResult?.best_model_name || 'model'}.pickle`;
-    const host = typeof window !== 'undefined' && window.location.hostname === '127.0.0.1' ? '127.0.0.1' : 'localhost';
-    const downloadUrl = `http://${host}:8000/api/v1/models/download/${filename}`;
+    const downloadUrl = `${API_BASE}/api/v1/models/download/${filename}`;
 
     const link = document.createElement('a');
     link.href = downloadUrl;
@@ -355,8 +355,7 @@ export const SimulatorPage: React.FC = () => {
 
   const handleDownloadCuredData = () => {
     const dsId = cleaningResult?.cured_dataset_id || activeDatasetId;
-    const host = typeof window !== 'undefined' && window.location.hostname === '127.0.0.1' ? '127.0.0.1' : 'localhost';
-    const downloadUrl = `http://${host}:8000/api/v1/datasets/${dsId}/download`;
+    const downloadUrl = `${API_BASE}/api/v1/datasets/${dsId}/download`;
 
     const link = document.createElement('a');
     link.href = downloadUrl;
@@ -415,7 +414,7 @@ export const SimulatorPage: React.FC = () => {
             </div>
 
             <a
-              href="http://127.0.0.1:8000/docs"
+              href={`${API_BASE}/docs`}
               target="_blank"
               rel="noreferrer"
               className="inline-flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 rounded-lg transition-colors"

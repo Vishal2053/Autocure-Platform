@@ -2,6 +2,7 @@ import React from 'react';
 import { ShieldCheck, Mail, ExternalLink } from 'lucide-react';
 import { GithubIcon } from './GithubIcon';
 import type { PackageIdentity } from '../types';
+import { API_BASE } from '../services/api';
 
 interface FooterProps {
   identity: PackageIdentity | null;
@@ -112,7 +113,7 @@ export const Footer: React.FC<FooterProps> = ({ identity, onScrollTo }) => {
                 </a>
               </li>
               <li>
-                <a href="http://127.0.0.1:8000/docs" target="_blank" rel="noreferrer" className="hover:text-brand-400 transition-colors inline-flex items-center space-x-1">
+                <a href={`${API_BASE}/docs`} target="_blank" rel="noreferrer" className="hover:text-brand-400 transition-colors inline-flex items-center space-x-1">
                   <span>FastAPI Swagger UI</span>
                   <ExternalLink className="w-3 h-3 ml-0.5" />
                 </a>

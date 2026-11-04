@@ -12,6 +12,11 @@ import io
 import pickle
 import shutil
 
+from dotenv import load_dotenv
+
+# Load environment configuration from .env file
+load_dotenv()
+
 from app.services.sample_data import get_sample_dataset, SAMPLE_CATALOG
 from app.services.dataset_service import dataset_manager
 
@@ -26,10 +31,13 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
+cors_origins_env = os.getenv("CORS_ORIGINS", "*")
+allow_origins = [o.strip() for o in cors_origins_env.split(",") if o.strip()] if cors_origins_env != "*" else ["*"]
+
 # Enable CORS for local Vite dev server
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allow_origins if allow_origins else ["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
